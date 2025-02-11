@@ -1,0 +1,101 @@
+library(devtools)
+library(usethis)
+library(openxlsx)
+library(readxl)
+library(tidyverse)
+#install_github("jabbamodel/JABBA")
+Sys.setenv(JAGS_HOME="C:/Program Files/JAGS/JAGS-4.3.1")
+#install.packages("remotes")
+#remotes::install_github("jabbamodel/JABBA")
+library(JABBA)
+library(rjags)
+
+setwd("C:/Users/lg_ri/Dropbox/Postdoc/UNIOESTE/JABBA/R 2")
+
+data <- read_xlsx("biomassa e cpue geral.xlsx")
+data<-as.data.frame(data)
+biomass<-cbind(data[,1],data[,2])
+colnames(biomass)<-c("year","biomass")
+cpue<- cbind(data[,1],data[,3])
+colnames(cpue)<-c("year","cpue")
+biomass<-as.data.frame(biomass)
+cpue<-as.data.frame(cpue)
+
+species<-"overall"
+  
+  #Pella scenarios with m estimated by the model and no CV
+  jbinput_2 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Pella 2",scenario = species,model.type = "Pella",sigma.est = TRUE,catch.metric = "(kg)")
+  jbinput_4 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Pella 4",scenario = species,model.type = "Pella",sigma.est = TRUE,psi.prior = c(1,0.2),catch.metric = "(kg)")
+  jbinput_6 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Pella 6",scenario = species,model.type = "Pella",sigma.est = TRUE,igamma = c(0.001,0.001),psi.prior = c(1,0.2),catch.metric = "(kg)")
+  
+  #fox
+  jbinput_8 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Fox 2",scenario = species,model.type = "Fox",sigma.est = TRUE,catch.metric = "(kg)")
+  jbinput_10 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Fox 4",scenario = species,model.type = "Fox",sigma.est = TRUE,psi.prior = c(1,0.2),catch.metric = "(kg)")
+  jbinput_12 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Fox 6",scenario = species,model.type = "Fox",sigma.est = TRUE,igamma = c(0.001,0.001),psi.prior = c(1,0.2),catch.metric = "(kg)")
+  
+  #Schaefer
+  jbinput_14 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Schaefer 2",scenario = species,model.type = "Schaefer",sigma.est = TRUE,catch.metric = "(kg)")
+  jbinput_16 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Schaefer 4",scenario = species,model.type = "Schaefer",sigma.est = TRUE,psi.prior = c(1,0.2),catch.metric = "(kg)")
+  jbinput_18 = build_jabba(catch = biomass,cpue = cpue,se = NULL,assessment = "Schaefer 6",scenario = species,model.type = "Schaefer",sigma.est = TRUE,igamma = c(0.001,0.001),psi.prior = c(1,0.2),catch.metric = "(kg)")
+  
+  
+  model_list<-list(jbinput_2,jbinput_4,jbinput_6,jbinput_8,jbinput_10,
+                   jbinput_12,jbinput_14,jbinput_16,jbinput_18)
+  
+  model_j_stats<- matrix(nrow = 9, ncol = 2)
+  
+  
+  for(j in 1:9){ 
+    
+    model<-model_list[[j]]  
+    
+    model_j = fit_jabba(model,quickmcmc=T)
+    
+    model_j_stats[j,]<-c(model_j$stats[5,2],model_j$stats[6,2])
+    
+  }
+  DIC<-model_j_stats[1:9,2]
+  file_name <- paste("DIC_", species, ".txt", sep = "")
+  write.table(DIC, file_name)
+  
+  model_number<-which.min(model_j_stats[1:9,2])
+  model_selected<-model_list[[model_number]]
+  
+  model_final = fit_jabba(model_selected,quickmcmc=F,save.csvs=T, ni = 30000, nt = 5,nb = 5000, nc = 5)
+  
+  
+  jbplot_trj(model_final,type=c("B","F","BBmsy","FFmsy"),as.png=T,width=6,height=6)
+  
+  #jbplot_spdyn(model_final,as.png=T,width=6,height=6) #production vs biomass
+  jbplot_spphase(model_final,as.png=T,width=6,height=6) #production function + Catch vs biomass
+  jbplot_kobe(model_final,as.png=T,width=6,height=6,ylab="Fishing status (F/Fmsy)",xlab="Fished status (B/Bmsy)") #Kobe plot
+  jbplot_biplot(model_final,as.png=T,width=6,height=6)
+  
+  #hind cast validation
+  hc1 = hindcast_jabba(model_selected,model_final,peels=1:5)
+  
+  mohns<-jbplot_retro(hc1,as.png =T,width=6,height=6)
+  mohns_mean<-mohns[row.names(mohns)=="rho.mu",]
+  file_name <- paste("mohns_mean_", species, ".xlsx", sep = "")
+  write.xlsx(mohns_mean, file_name)
+  
+  #model evaluation
+  jbplot_runstest(model_final,as.png=T,width=6,height=6)
+  jbplot_ppdist(model_final,as.png=T,width=6,height=6)
+  
+  #MCMC chains
+  jbplot_mcmc(model_final,as.png=T,width=6,height=6)
+  
+  #forescasting
+  #fw1 = fw_jabba(model_final,nyears=10,imp.yr=1,imp.values = seq(0.8,1.2,0.1),quant="F",type="msy",stochastic = T)
+  #fw2 = fw_jabba(model_final,nyears=10,imp.yr=1,quant="F",type="msy",stochastic = T)
+  fw3 = fw_jabba(model_final,nyears=10,imp.yr=1,quant="Catch",type="msy",stochastic = T)
+  #fw4 = fw_jabba(model_final,quant="Catch",type="abs")
+  output.dir<-setwd("C:/Users/lg_ri/Dropbox/Postdoc/UNIOESTE/JABBA/R 2")
+  prefix<-species
+  jbs<-"forecasting"
+  jbs$assessment<-"_"
+  jbplot_ensemble(fw3,as.png=T)
+
+
+
